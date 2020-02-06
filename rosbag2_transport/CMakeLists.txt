@@ -26,6 +26,7 @@ find_package(rcl REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rcutils REQUIRED)
 find_package(rosbag2 REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(rmw REQUIRED)
 find_package(shared_queues_vendor REQUIRED)
 
@@ -49,6 +50,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rosidl_generator_cpp
   rmw
   shared_queues_vendor
+  sensor_msgs
 )
 
 include(cmake/configure_python.cmake)

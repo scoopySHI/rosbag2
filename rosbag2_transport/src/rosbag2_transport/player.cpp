@@ -30,6 +30,7 @@
 #include "rosbag2_transport/logging.hpp"
 #include "rosbag2_node.hpp"
 #include "replayable_message.hpp"
+#include "sensor_msgs/msg/imu.hpp"
 
 namespace rosbag2_transport
 {
@@ -56,12 +57,14 @@ void Player::play(const PlayOptions & options)
 {
   prepare_publishers();
 
+  //prepare_topic_name_type_map();
+
   storage_loading_future_ = std::async(std::launch::async,
       [this, options]() {load_storage_content(options);});
 
   wait_for_filled_queue(options);
 
-  play_messages_from_queue();
+  play_messages_from_queue(options);
 }
 
 void Player::wait_for_filled_queue(const PlayOptions & options) const
@@ -114,11 +117,11 @@ void Player::enqueue_up_to_boundary(const TimePoint & time_first_message, uint64
   }
 }
 
-void Player::play_messages_from_queue()
+void Player::play_messages_from_queue(const PlayOptions & options)
 {
   start_time_ = std::chrono::system_clock::now();
   do {
-    play_messages_until_queue_empty();
+    play_messages_until_queue_empty(options);
     if (!is_storage_completely_loaded() && rclcpp::ok()) {
       ROSBAG2_TRANSPORT_LOG_WARN("Message queue starved. Messages will be delayed. Consider "
         "increasing the --read-ahead-queue-size option.");
@@ -126,16 +129,58 @@ void Player::play_messages_from_queue()
   } while (!is_storage_completely_loaded() && rclcpp::ok());
 }
 
-void Player::play_messages_until_queue_empty()
+void Player::play_messages_until_queue_empty(const PlayOptions & options)
 {
   ReplayableMessage message;
   while (message_queue_.try_dequeue(message) && rclcpp::ok()) {
     std::this_thread::sleep_until(start_time_ + message.time_since_start);
+
+    if(options.clock_type == "current")
+    {
+      prepare_clock(message);
+    }
+
     if (rclcpp::ok()) {
       publishers_[message.message->topic_name]->publish(message.message->serialized_data);
     }
   }
 }
+
+void Player::prepare_clock(ReplayableMessage & message)
+{
+  if(message.message->topic_name == "/imu/data")
+  {
+    std::cout << "change time stamper" << "\n";
+    auto topic_msg = std::make_shared<sensor_msgs::msg::Imu>();
+    auto string_ts = rosidl_typesupport_cpp::get_message_type_support_handle<sensor_msgs::msg::Imu>();
+    auto ret_de = rmw_deserialize(message.message->serialized_data.get(), string_ts, topic_msg.get());
+    if (ret_de != RMW_RET_OK) {
+              fprintf(stderr, "failed to deserialize serialized message\n");
+              return;
+    }
+
+    rclcpp::Clock Clock_now;
+    builtin_interfaces::msg::Time current_time = Clock_now.now();
+    topic_msg->header.stamp = current_time;
+
+    auto ret_se = rmw_serialize(topic_msg.get(), string_ts, message.message->serialized_data.get());
+    if (ret_se != RMW_RET_OK) {
+              fprintf(stderr, "failed to serialize serialized message\n");
+              return;
+    }
+
+    std::cout << current_time.sec << "\n";
+  }
+}
+
+//void Player::prepare_topic_name_type_map()
+//{
+//  auto topics = reader_->get_all_topics_and_types();
+//  for (const auto & topic : topics){
+//    topics_map_.insert(std::make_pair(
+//      topic.name, rosbag2::get_typesupport(topic.type, "rosidl_typesupport_cpp")))
+//  }
+//}
 
 void Player::prepare_publishers()
 {

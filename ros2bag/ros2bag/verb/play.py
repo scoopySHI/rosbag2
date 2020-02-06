@@ -28,6 +28,9 @@ class PlayVerb(VerbExtension):
             '-s', '--storage', default='sqlite3',
             help='storage identifier to be used, defaults to "sqlite3"')
         parser.add_argument(
+            '-c', '--clock', default='past',
+            help='determine the clock which will be used in ros2bag play, default is current time')
+        parser.add_argument(
             '-r', '--read-ahead-queue-size', type=int, default=1000,
             help='size of message queue rosbag tries to hold in memory to help deterministic '
                  'playback. Larger size will result in larger memory needs but might prevent '
@@ -46,5 +49,6 @@ class PlayVerb(VerbExtension):
         rosbag2_transport_py.play(
             uri=bag_file,
             storage_id=args.storage,
+            clock_type=args.clock,
             node_prefix=NODE_NAME_PREFIX,
             read_ahead_queue_size=args.read_ahead_queue_size)

@@ -104,6 +104,7 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
   static const char * kwlist[] = {
     "uri",
     "storage_id",
+    "clock_type",
     "node_prefix",
     "read_ahead_queue_size",
     nullptr
@@ -112,10 +113,12 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
   char * uri;
   char * storage_id;
   char * node_prefix;
+  char * clock_type;
   size_t read_ahead_queue_size;
-  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "sss|k", const_cast<char **>(kwlist),
+  if (!PyArg_ParseTupleAndKeywords(args, kwargs, "ssss|k", const_cast<char **>(kwlist),
     &uri,
     &storage_id,
+    &clock_type,
     &node_prefix,
     &read_ahead_queue_size))
   {
@@ -127,6 +130,7 @@ rosbag2_transport_play(PyObject * Py_UNUSED(self), PyObject * args, PyObject * k
 
   play_options.node_prefix = std::string(node_prefix);
   play_options.read_ahead_queue_size = read_ahead_queue_size;
+  play_options.clock_type = std::string(clock_type);
 
   rosbag2_transport::Rosbag2Transport transport;
   transport.init();

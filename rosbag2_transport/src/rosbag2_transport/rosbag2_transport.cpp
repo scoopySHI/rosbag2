@@ -93,6 +93,7 @@ std::shared_ptr<Rosbag2Node> Rosbag2Transport::setup_node(std::string node_prefi
 void Rosbag2Transport::play(
   const StorageOptions & storage_options, const PlayOptions & play_options)
 {
+  std::cout << "-----------------Entaro tasada!---------------" << std::endl;
   try {
     reader_->open(storage_options, {"", rmw_get_serialization_format()});
 

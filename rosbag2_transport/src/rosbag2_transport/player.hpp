@@ -26,6 +26,10 @@
 #include "replayable_message.hpp"
 #include "rosbag2/types.hpp"
 #include "rosbag2_transport/play_options.hpp"
+#include "rosbag2_node.hpp"
+
+
+#include "rosidl_typesupport_cpp/message_type_support.hpp"
 
 using TimePoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
@@ -54,9 +58,11 @@ private:
   bool is_storage_completely_loaded() const;
   void enqueue_up_to_boundary(const TimePoint & time_first_message, uint64_t boundary);
   void wait_for_filled_queue(const PlayOptions & options) const;
-  void play_messages_from_queue();
-  void play_messages_until_queue_empty();
+  void play_messages_from_queue(const PlayOptions & options);
+  void play_messages_until_queue_empty(const PlayOptions & options);
+  void prepare_clock(ReplayableMessage & message);
   void prepare_publishers();
+  void prepare_topic_name_type_map();
 
   static constexpr double read_ahead_lower_bound_percentage_ = 0.9;
   static const std::chrono::milliseconds queue_read_wait_period_;
@@ -67,6 +73,7 @@ private:
   mutable std::future<void> storage_loading_future_;
   std::shared_ptr<Rosbag2Node> rosbag2_transport_;
   std::unordered_map<std::string, std::shared_ptr<GenericPublisher>> publishers_;
+  std::unordered_map<std::string, std::shared_ptr<rosidl_message_type_support_t>> topics_map_;
 };
 
 }  // namespace rosbag2_transport
