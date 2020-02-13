@@ -204,32 +204,6 @@ void Player::play_messages_until_queue_empty()
   }
 }
 
-//void Player::prepare_clock(ReplayableMessage & message)
-//{
-//  if(message.message->topic_name == "/imu/data")
-//  {
-//    std::cout << "change time stamper" << "\n";
-//    auto topic_msg = std::make_shared<sensor_msgs::msg::Imu>();
-//    auto string_ts = rosidl_typesupport_cpp::get_message_type_support_handle<sensor_msgs::msg::Imu>();
-//    auto ret_de = rmw_deserialize(message.message->serialized_data.get(), string_ts, topic_msg.get());
-//    if (ret_de != RMW_RET_OK) {
-//              fprintf(stderr, "failed to deserialize serialized message\n");
-//              return;
-//    }
-
-//    rclcpp::Clock Clock_now;
-//    builtin_interfaces::msg::Time current_time = Clock_now.now();
-//    topic_msg->header.stamp = current_time;
-
-//    auto ret_se = rmw_serialize(topic_msg.get(), string_ts, message.message->serialized_data.get());
-//    if (ret_se != RMW_RET_OK) {
-//              fprintf(stderr, "failed to serialize serialized message\n");
-//              return;
-//    }
-
-//    std::cout << current_time.sec << "\n";
-//  }
-//}
 
 void Player::prepare_topic_ts_map()
 {
