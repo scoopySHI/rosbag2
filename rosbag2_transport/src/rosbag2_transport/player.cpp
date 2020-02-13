@@ -57,14 +57,17 @@ void Player::play(const PlayOptions & options)
 {
   prepare_publishers();
 
-  //prepare_topic_name_type_map();
+  if(options.clock_type == "current")
+  {
+    prepare_topic_ts_map();
+  }
 
   storage_loading_future_ = std::async(std::launch::async,
       [this, options]() {load_storage_content(options);});
 
   wait_for_filled_queue(options);
 
-  play_messages_from_queue(options);
+  play_messages_from_queue();
 }
 
 void Player::wait_for_filled_queue(const PlayOptions & options) const
@@ -117,11 +120,11 @@ void Player::enqueue_up_to_boundary(const TimePoint & time_first_message, uint64
   }
 }
 
-void Player::play_messages_from_queue(const PlayOptions & options)
+void Player::play_messages_from_queue()
 {
   start_time_ = std::chrono::system_clock::now();
   do {
-    play_messages_until_queue_empty(options);
+    play_messages_until_queue_empty();
     if (!is_storage_completely_loaded() && rclcpp::ok()) {
       ROSBAG2_TRANSPORT_LOG_WARN("Message queue starved. Messages will be delayed. Consider "
         "increasing the --read-ahead-queue-size option.");
@@ -129,16 +132,71 @@ void Player::play_messages_from_queue(const PlayOptions & options)
   } while (!is_storage_completely_loaded() && rclcpp::ok());
 }
 
-void Player::play_messages_until_queue_empty(const PlayOptions & options)
+void hexdump(void *ptr, int buflen)
+  {
+    unsigned char *buf = (unsigned char*)ptr;
+    int i, j;
+    for (i = 0; i < buflen; i+=16)
+    {
+      printf("%06x: ", i);
+      for (j = 0; j < 16; j++)
+        if (i + j < buflen)
+          printf("%02x ", buf[i + j]);
+        else
+          printf("   ");
+      printf(" ");
+      for (j = 0; j < 16; j++)
+        if (i + j < buflen)
+          printf("%c", isprint(buf[i + j]) ? buf[i + j] : '.');
+      printf("\n");
+    }
+  }
+
+void Player::play_messages_until_queue_empty()
 {
   ReplayableMessage message;
   while (message_queue_.try_dequeue(message) && rclcpp::ok()) {
     std::this_thread::sleep_until(start_time_ + message.time_since_start);
 
-    if(options.clock_type == "current")
-    {
-      prepare_clock(message);
+    if ( topics_ts_map_.find(message.message->topic_name) != topics_ts_map_.end() ) {
+      builtin_interfaces::msg::Time ros_time_to_set;
+      //auto time_ptr = std::make_shared<builtin_interfaces::msg::Time>(ros_time_to_set);
+
+      std::chrono::time_point<std::chrono::system_clock> time_to_be_set = start_time_ + message.time_since_start;
+      auto offset_to_be_set = topics_ts_map_[message.message->topic_name];
+      //print offset to struct
+      std::cout << "offset in struct: " << offset_to_be_set << "\n";
+      std::chrono::duration_cast<std::chrono::nanoseconds>(time_to_be_set.time_since_epoch());
+      //print chrono time
+      std::cout << "chrono time: " << time_to_be_set.time_since_epoch().count() << "\n";
+      ros_time_to_set.sec = static_cast<int32_t>(floor(time_to_be_set.time_since_epoch().count()/1e9));
+      ros_time_to_set.nanosec = static_cast<uint32_t>(round(time_to_be_set.time_since_epoch().count() - ros_time_to_set.sec*1e9));
+
+      //test
+      std::cout << "int64: " << time_to_be_set.time_since_epoch().count() - ros_time_to_set.sec*1e9 << "\n";
+
+      //print ros time
+      std::cout << "sec: " << ros_time_to_set.sec << " nano: " << ros_time_to_set.nanosec << "\n";
+      //hexdeump rostime
+      hexdump(&ros_time_to_set, sizeof(builtin_interfaces::msg::Time));
+      std::cout << "--------------------------------------------\n";
+
+      //hexdeump buffer
+      hexdump(message.message->serialized_data->buffer, sizeof(builtin_interfaces::msg::Time) + 108);
+      std::cout << "--------------------------------------------\n";
+
+      //memcpy
+      uint8_t * buffer_temp = message.message->serialized_data->buffer;
+      buffer_temp = buffer_temp + 4 + offset_to_be_set/2;
+      memcpy(buffer_temp, &ros_time_to_set, sizeof(builtin_interfaces::msg::Time));
+      hexdump(message.message->serialized_data->buffer, sizeof(builtin_interfaces::msg::Time) + 24);
+      std::cout << "--------------------------------------------\n";
     }
+
+//    if(options.clock_type == "current")
+//    {
+//      prepare_clock(message);
+//    }
 
     if (rclcpp::ok()) {
       publishers_[message.message->topic_name]->publish(message.message->serialized_data);
@@ -146,41 +204,60 @@ void Player::play_messages_until_queue_empty(const PlayOptions & options)
   }
 }
 
-void Player::prepare_clock(ReplayableMessage & message)
-{
-  if(message.message->topic_name == "/imu/data")
-  {
-    std::cout << "change time stamper" << "\n";
-    auto topic_msg = std::make_shared<sensor_msgs::msg::Imu>();
-    auto string_ts = rosidl_typesupport_cpp::get_message_type_support_handle<sensor_msgs::msg::Imu>();
-    auto ret_de = rmw_deserialize(message.message->serialized_data.get(), string_ts, topic_msg.get());
-    if (ret_de != RMW_RET_OK) {
-              fprintf(stderr, "failed to deserialize serialized message\n");
-              return;
-    }
-
-    rclcpp::Clock Clock_now;
-    builtin_interfaces::msg::Time current_time = Clock_now.now();
-    topic_msg->header.stamp = current_time;
-
-    auto ret_se = rmw_serialize(topic_msg.get(), string_ts, message.message->serialized_data.get());
-    if (ret_se != RMW_RET_OK) {
-              fprintf(stderr, "failed to serialize serialized message\n");
-              return;
-    }
-
-    std::cout << current_time.sec << "\n";
-  }
-}
-
-//void Player::prepare_topic_name_type_map()
+//void Player::prepare_clock(ReplayableMessage & message)
 //{
-//  auto topics = reader_->get_all_topics_and_types();
-//  for (const auto & topic : topics){
-//    topics_map_.insert(std::make_pair(
-//      topic.name, rosbag2::get_typesupport(topic.type, "rosidl_typesupport_cpp")))
+//  if(message.message->topic_name == "/imu/data")
+//  {
+//    std::cout << "change time stamper" << "\n";
+//    auto topic_msg = std::make_shared<sensor_msgs::msg::Imu>();
+//    auto string_ts = rosidl_typesupport_cpp::get_message_type_support_handle<sensor_msgs::msg::Imu>();
+//    auto ret_de = rmw_deserialize(message.message->serialized_data.get(), string_ts, topic_msg.get());
+//    if (ret_de != RMW_RET_OK) {
+//              fprintf(stderr, "failed to deserialize serialized message\n");
+//              return;
+//    }
+
+//    rclcpp::Clock Clock_now;
+//    builtin_interfaces::msg::Time current_time = Clock_now.now();
+//    topic_msg->header.stamp = current_time;
+
+//    auto ret_se = rmw_serialize(topic_msg.get(), string_ts, message.message->serialized_data.get());
+//    if (ret_se != RMW_RET_OK) {
+//              fprintf(stderr, "failed to serialize serialized message\n");
+//              return;
+//    }
+
+//    std::cout << current_time.sec << "\n";
 //  }
 //}
+
+void Player::prepare_topic_ts_map()
+{
+  auto topics = reader_->get_all_topics_and_types();
+
+  //build the map
+  for (const auto & topic : topics){
+      auto type_support = rosbag2::get_typesupport(topic.type, "rosidl_typesupport_introspection_cpp");
+      auto msg_members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(type_support->data);
+
+      const rosidl_typesupport_introspection_cpp::MessageMember *msg_member_ptr = msg_members->members_;
+      auto msg_member_count = msg_members->member_count_;
+      for (unsigned int i = 0;i < msg_member_count;i++) {
+          if(strcmp(msg_member_ptr[i].name_, "header") == 0)
+          {
+              topics_ts_map_.insert(std::make_pair(topic.name, msg_member_ptr[i].offset_));
+              break;
+          }
+      }
+  }
+
+  //check map
+  for(auto it = topics_ts_map_.begin(); it != topics_ts_map_.end(); it++)
+  {
+    std::cout << "Name: " << it->first << "    header offset: " << it->second << "\n";
+  }
+
+}
 
 void Player::prepare_publishers()
 {
