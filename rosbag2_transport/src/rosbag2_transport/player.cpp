@@ -132,6 +132,7 @@ void Player::play_messages_from_queue()
   } while (!is_storage_completely_loaded() && rclcpp::ok());
 }
 
+//Hexdump for debug
 void hexdump(void *ptr, int buflen)
   {
     unsigned char *buf = (unsigned char*)ptr;
@@ -152,6 +153,12 @@ void hexdump(void *ptr, int buflen)
     }
   }
 
+//Dynamic Alignment as Fastrtps
+unsigned long alignment(unsigned long data_size, unsigned long last_data_size, unsigned long current_position)
+{
+  return data_size > last_data_size ? (data_size - current_position % data_size) & (data_size-1):0;
+}
+
 //deal with string
 void Player::deal_with_string(const uint8_t *dds_buffer)
 {
@@ -159,10 +166,10 @@ void Player::deal_with_string(const uint8_t *dds_buffer)
   uint32_t length;
   size_t string_header = sizeof(uint32_t);//string header 4 Bytes
 
-  unsigned long one_offset = string_header > last_data_size ? (string_header - current_position % string_header) & (string_header-1) : 0;
-  memcpy(&length, (dds_buffer+current_position+4+one_offset), string_header);
+  unsigned long one_offset = alignment(string_header, last_data_size, current_position);
   current_position = current_position + one_offset;
-  last_data_size = sizeof (char);
+  memcpy(&length, (dds_buffer + current_position + 4), string_header);
+  last_data_size = sizeof(char);
   current_position += (string_header + length);
   std::cout << "STRING length: " << length << "\n";
   std::cout << "STRING current position--offset: " << current_position << "--" << one_offset << "\n";
@@ -175,16 +182,16 @@ void Player::deal_with_wstring(const uint8_t *dds_buffer)
   uint32_t length;
   size_t string_header = sizeof(uint32_t);//wstring header 4 Bytes
 
-  unsigned long one_offset = string_header > last_data_size ? (string_header - current_position % string_header) & (string_header-1) : 0;
-  memcpy(&length, (dds_buffer+current_position+4+one_offset), string_header);
+  unsigned long one_offset = alignment(string_header, last_data_size, current_position);
   current_position = current_position + one_offset;
+  memcpy(&length, (dds_buffer + current_position + 4), string_header);
   last_data_size = sizeof(uint32_t);
-  current_position += (string_header + length * (sizeof(uint32_t)));
+  current_position += (string_header + length * sizeof(uint32_t));
   std::cout << "WSTRING length: " << length << "\n";
   std::cout << "WSTRING current position---offset: " << current_position << "--" << one_offset << "\n";
 }
 
-//find out the real offset of header in fastrtps serialized data
+//find out the real position of header in fastrtps serialized data
 void Player::calculate_position_with_align(const uint8_t * dds_buffer_ptr, const rosidl_typesupport_introspection_cpp::MessageMember *message_member, unsigned long stop_index)
 {
   unsigned long one_offset = 0;
@@ -193,6 +200,8 @@ void Player::calculate_position_with_align(const uint8_t * dds_buffer_ptr, const
   for (unsigned int i=0; i < stop_index; i++) {
     bool is_string = false;
     bool is_wstring = false;
+    bool is_ros_msg_type = false;
+    const rosidl_typesupport_introspection_cpp::MessageMembers * sub_members;
     switch (message_member[i].type_id_) {
       case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL:
         data_size = sizeof(bool);
@@ -242,43 +251,53 @@ void Player::calculate_position_with_align(const uint8_t * dds_buffer_ptr, const
       case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
         deal_with_wstring(dds_buffer_ptr);
         is_wstring = true;
-        break; //wstring not finish
+        break;
       case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE:
-        auto sub_members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(message_member[i].members_->data);
-        std::cout << "count: " << sub_members->member_count_ << "\n";
+        sub_members = static_cast<const rosidl_typesupport_introspection_cpp::MessageMembers *>(message_member[i].members_->data);
         calculate_position_with_align(dds_buffer_ptr, sub_members->members_, sub_members->member_count_);
-        continue;
+        is_ros_msg_type = true;
+        break;
       }
-    if(!is_string && !is_wstring && !message_member[i].is_array_)
+    //standard element
+    if(!is_string && !is_wstring && !is_ros_msg_type && !message_member[i].is_array_)
       {
         std::cout << "NORMAL current position before change: " << current_position << "\n";
-        one_offset = data_size > last_data_size ? (data_size - current_position % data_size) & (data_size-1) : 0;
-        current_position = current_position + one_offset + data_size;
+        one_offset = alignment(data_size, last_data_size, current_position);
+        current_position += (one_offset + data_size);
         std::cout << "NORMAL current position--data size--offset: " << current_position << "--" << data_size << "--" << one_offset << "\n";
         last_data_size = data_size;
       }
-    else if(!is_string && !is_wstring && message_member[i].is_array_)
+    //standard array
+    else if(!is_string && !is_wstring && !is_ros_msg_type && message_member[i].is_array_)
       {
         for (uint j = 0;j < message_member[i].array_size_; j++) {
           std::cout << "ARRAY current position before change: " << current_position << "\n";
-          one_offset = data_size > last_data_size ? (data_size - current_position % data_size) & (data_size-1) : 0;
-          current_position = current_position + one_offset + data_size;
+          one_offset = alignment(data_size, last_data_size, current_position);
+          current_position += (one_offset + data_size);
           std::cout << "ARRAY current position--data size--offset: " << current_position << "--" << data_size << "--" << one_offset << "\n";
           last_data_size = data_size;
         }
       }
-    else if (is_string && !is_wstring && message_member[i].is_array_)
+    //array of string
+    else if (is_string && !is_wstring && !is_ros_msg_type && message_member[i].is_array_)
       {
         for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
           deal_with_string(dds_buffer_ptr);
         }
       }
-    else if (is_wstring && !is_string && message_member[i].is_array_)
+    //array of wstring
+    else if (is_wstring && !is_string && !is_ros_msg_type && message_member[i].is_array_)
       {
         for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
-        deal_with_wstring(dds_buffer_ptr);
+          deal_with_wstring(dds_buffer_ptr);
+        }
       }
-    }
+    else if (is_ros_msg_type && !is_string && !is_wstring && message_member[i].is_array_)
+      {
+        for (uint j = 0;j < message_member[i].array_size_ - 1; j++) {
+          calculate_position_with_align(dds_buffer_ptr, sub_members->members_, sub_members->member_count_);
+        }
+      }
   }
 
 }
@@ -293,12 +312,11 @@ void Player::play_messages_until_queue_empty()
       builtin_interfaces::msg::Time ros_time_to_set;
       //auto time_ptr = std::make_shared<builtin_interfaces::msg::Time>(ros_time_to_set)
 
-      std::chrono::time_point<std::chrono::system_clock> time_to_be_set = start_time_ + message.time_since_start;
+      std::chrono::time_point<std::chrono::high_resolution_clock> time_to_be_set = start_time_ + message.time_since_start;
 
       auto offset_index = topics_ts_map_[message.message->topic_name].stop_index;
       const rosidl_typesupport_introspection_cpp::MessageMember * msg_ptr = topics_ts_map_[message.message->topic_name].msg_member_ptr;
-      //print offset to struct
-      //std::cout << "offset in struct: " << offset_to_be_set << "\n";
+
       std::chrono::duration_cast<std::chrono::nanoseconds>(time_to_be_set.time_since_epoch());
       //print chrono time
       std::cout << "chrono time: " << time_to_be_set.time_since_epoch().count() << "\n";
@@ -322,13 +340,13 @@ void Player::play_messages_until_queue_empty()
       uint8_t * buffer_temp = message.message->serialized_data->buffer;
       dds_buffer_ptr = message.message->serialized_data->buffer;
       calculate_position_with_align(dds_buffer_ptr, msg_ptr, offset_index);
-      std::cout << "buffer_temp: " << (unsigned long)buffer_temp << "\n";
+      //std::cout << "buffer_temp: " << (unsigned long)buffer_temp << "\n";
       size_t header_time_sec_size = sizeof (int32_t);
-      unsigned long last_offset = header_time_sec_size > last_data_size ? (header_time_sec_size - current_position % header_time_sec_size) & (header_time_sec_size-1): 0;
+      unsigned long last_offset = alignment(header_time_sec_size, last_data_size, current_position);
       current_position += last_offset;
       buffer_temp = buffer_temp + current_position + 4; //plus dds header
       std::cout << "current position--data size--last offset: " << current_position << "--" << header_time_sec_size << "--" << last_offset << "\n";
-      std::cout << "buffer_temp: " << (unsigned long)buffer_temp << "\n";
+      //std::cout << "buffer_temp: " << (unsigned long)buffer_temp << "\n";
 
       memcpy(buffer_temp, &ros_time_to_set, sizeof(builtin_interfaces::msg::Time));
       hexdump(message.message->serialized_data->buffer, sizeof(builtin_interfaces::msg::Time) + 48);
