@@ -26,8 +26,10 @@ find_package(rcl REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rcutils REQUIRED)
 find_package(rosbag2 REQUIRED)
+find_package(rosidl_typesupport_introspection_cpp)
 find_package(rmw REQUIRED)
 find_package(shared_queues_vendor REQUIRED)
+
 
 add_library(${PROJECT_NAME} SHARED
   src/rosbag2_transport/player.cpp
@@ -47,6 +49,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rcutils
   rosbag2
   rosidl_generator_cpp
+  rosidl_typesupport_introspection_cpp
   rmw
   shared_queues_vendor
 )
