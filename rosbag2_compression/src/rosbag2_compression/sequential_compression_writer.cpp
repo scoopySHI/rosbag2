@@ -141,6 +141,7 @@ void SequentialCompressionWriter::reset()
       should_compress_last_file_)
     {
       try {
+        storage_.reset();  // Storage must be closed before it can be compressed.
         compress_last_file();
       } catch (const std::runtime_error & e) {
         ROSBAG2_COMPRESSION_LOG_WARN_STREAM("Could not compress the last bag file.\n" << e.what());
@@ -206,24 +207,37 @@ void SequentialCompressionWriter::compress_last_file()
     throw std::runtime_error{"Compressor was not opened!"};
   }
 
-  const auto & to_compress = metadata_.relative_file_paths.back();
+  const auto to_compress = rcpputils::fs::path{metadata_.relative_file_paths.back()};
 
-  ROSBAG2_COMPRESSION_LOG_DEBUG_STREAM("Compressing \"" << to_compress << "\"");
+  if (to_compress.exists() && to_compress.file_size() > 0u) {
+    const auto compressed_uri = compressor_->compress_uri(to_compress.string());
 
-  metadata_.relative_file_paths.back() = compressor_->compress_uri(to_compress);
+    metadata_.relative_file_paths.back() = compressed_uri;
+
+    if (rcpputils::fs::remove(to_compress)) {
+      ROSBAG2_COMPRESSION_LOG_ERROR_STREAM(
+        "Failed to remove uncompressed bag: \"" << to_compress.string() << "\"");
+    }
+  } else {
+    ROSBAG2_COMPRESSION_LOG_DEBUG_STREAM(
+      "Removing last file: \"" << to_compress.string() <<
+        "\" because it either is empty or does not exist.");
+
+    metadata_.relative_file_paths.pop_back();
+  }
 }
 
 void SequentialCompressionWriter::split_bagfile()
 {
-  if (compression_options_.compression_mode == rosbag2_compression::CompressionMode::FILE) {
-    compress_last_file();
-  }
-
   const auto storage_uri = format_storage_uri(
     base_folder_,
     metadata_.relative_file_paths.size());
 
   storage_ = storage_factory_->open_read_write(storage_uri, metadata_.storage_identifier);
+
+  if (compression_options_.compression_mode == rosbag2_compression::CompressionMode::FILE) {
+    compress_last_file();
+  }
 
   if (!storage_) {
     // Add a check to make sure reset() does not compress the file again if we couldn't load the
@@ -296,7 +310,11 @@ void SequentialCompressionWriter::finalize_metadata()
   metadata_.bag_size = 0;
 
   for (const auto & path : metadata_.relative_file_paths) {
-    metadata_.bag_size += rcutils_get_file_size(path.c_str());
+    const auto bag_path = rcpputils::fs::path{path};
+
+    if (bag_path.exists()) {
+      metadata_.bag_size += bag_path.file_size();
+    }
   }
 
   metadata_.topics_with_message_count.clear();

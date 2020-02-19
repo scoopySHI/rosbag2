@@ -20,8 +20,6 @@
 
 #include "rcpputils/filesystem_helper.hpp"
 
-#include "rcutils/filesystem.h"
-
 #include "rosbag2_compression/zstd_decompressor.hpp"
 
 #include "logging.hpp"
@@ -31,6 +29,10 @@ namespace
 
 // String constant used to identify ZstdDecompressor.
 constexpr const char kDecompressionIdentifier[] = "zstd";
+// Used as a parameter type in a function that accepts the output of ZSTD_decompress.
+using ZstdDecompressReturnType = decltype(ZSTD_decompress(nullptr, 0, nullptr, 0));
+// Used as a parameter type in a function that accepts the output of ZSTD_getFrameContentSize.
+using ZstdGetFrameContentSizeReturnType = decltype(ZSTD_getFrameContentSize(nullptr, 0));
 
 /**
  * Open a file using the C API.
@@ -63,17 +65,19 @@ std::vector<uint8_t> get_input_buffer(const std::string & uri)
   const auto file_pointer = open_file(uri.c_str(), "rb");
   if (file_pointer == nullptr) {
     std::stringstream errmsg;
-    errmsg << "Failed to open file: \"" << uri << "\" for binary reading!";
+    errmsg << "Failed to open file: \"" << uri <<
+      "\" for binary reading! errno(" << errno << ")";
 
     throw std::runtime_error{errmsg.str()};
   }
 
-  const auto compressed_buffer_length = rcutils_get_file_size(uri.c_str());
+  const auto file_path = rcpputils::fs::path{uri};
+  const auto compressed_buffer_length = file_path.exists() ? file_path.file_size() : 0u;
   if (compressed_buffer_length == 0) {
     fclose(file_pointer);
 
     std::stringstream errmsg;
-    errmsg << "Unable to get size of file: " << uri;
+    errmsg << "Unable to get size of file: \"" << uri << "\"";
 
     throw std::runtime_error{errmsg.str()};
   }
@@ -119,7 +123,7 @@ void write_output_buffer(
 {
   if (output_buffer.empty()) {
     std::stringstream errmsg;
-    errmsg << "Cannot write empty buffer to file: " << uri;
+    errmsg << "Cannot write empty buffer to file: \"" << uri << "\"";
 
     throw std::runtime_error{errmsg.str()};
   }
@@ -127,7 +131,8 @@ void write_output_buffer(
   const auto file_pointer = open_file(uri.c_str(), "wb");
   if (file_pointer == nullptr) {
     std::stringstream errmsg;
-    errmsg << "Failed to open file: \"" << uri << "\" for binary writing!";
+    errmsg << "Failed to open file: \"" << uri <<
+      "\" for binary writing! errno(" << errno << ")";
 
     throw std::runtime_error{errmsg.str()};
   }
@@ -158,8 +163,9 @@ void write_output_buffer(
 
 /**
  * Checks compression_result and throws a runtime_error if there was a ZSTD error.
+ * \param compression_result is the return value of ZSTD_decompress.
  */
-void throw_on_zstd_error(const size_t compression_result)
+void throw_on_zstd_error(const ZstdDecompressReturnType compression_result)
 {
   if (ZSTD_isError(compression_result)) {
     std::stringstream error;
@@ -172,8 +178,9 @@ void throw_on_zstd_error(const size_t compression_result)
 /**
  * Checks frame_content and throws a runtime_error if there was a ZSTD error
  * or frame_content is invalid.
+ * \param frame_content is the return value of ZSTD_getFrameContentSize.
  */
-void throw_on_invalid_frame_content(const size_t frame_content)
+void throw_on_invalid_frame_content(const ZstdGetFrameContentSizeReturnType frame_content)
 {
   if (frame_content == ZSTD_CONTENTSIZE_ERROR) {
     throw std::runtime_error{"Unable to determine file size due to error."};
