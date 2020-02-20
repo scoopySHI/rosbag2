@@ -218,7 +218,7 @@ void Player::calculate_position_with_align(const uint8_t * dds_buffer_ptr, const
         data_size = sizeof (float);
         break;
       case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT64:
-        data_size = sizeof (double);
+        data_size = 8;
         break;
       case ::rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
         data_size = sizeof (int16_t);
